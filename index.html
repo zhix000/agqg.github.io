@@ -485,23 +485,24 @@ footer p{margin:6px 0}
 
     <div class="authors">
       <a href="#">Zhicheng Liao</a><sup>1</sup>&nbsp;&nbsp;
-      <a href="#">Baoliang Chen</a><sup>1,2</sup>&nbsp;&nbsp;
-      <a href="#">Hanwei Zhu</a><sup>2</sup>&nbsp;&nbsp;
-      <a href="#">Lingyu Zhu</a><sup>3</sup>&nbsp;&nbsp;
-      <a href="#">Shiqi Wang</a><sup>3</sup>&nbsp;&nbsp;
-      <a href="#">Weisi Lin</a><sup>2</sup>
+      <a href="#">Baoliang Chen</a><sup>1,3</sup>&nbsp;&nbsp;
+      <a href="#">Hanwei Zhu</a><sup>3</sup>&nbsp;&nbsp;
+      <a href="#">Lingyu Zhu</a><sup>2</sup>&nbsp;&nbsp;
+      <a href="#">Shiqi Wang</a><sup>2</sup>&nbsp;&nbsp;
+      <a href="#">Weisi Lin</a><sup>3</sup>
     </div>
 
     <div class="affiliations">
       <sup>1</sup>South China Normal University &nbsp;·&nbsp; 
-      <sup>2</sup>Nanyang Technological University &nbsp;·&nbsp; 
-      <sup>3</sup>City University of Hong Kong
+      <sup>2</sup>City University of Hong Kong
+      <sup>3</sup>Nanyang Technological University &nbsp;·&nbsp; 
+
     </div>
 
     <div class="venue-line">A psychometrics-inspired, plugable trainable module for AI-Generated Image Quality Assessment</div>
 
     <div class="badges">
-      <a class="badge primary" href="https://arxiv.org/pdf/2511.09948" target="_blank" rel="noopener">
+      <a class="badge primary" href="https://arxiv.org/pdf/2512.22780" target="_blank" rel="noopener">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6M8 13h8M8 17h6"/></svg>
         Paper
       </a>
@@ -1296,6 +1297,42 @@ function initExplorer() {
     }
   };
 
+  /* ---------- Chart.js 自定义插件：柱状图数值标签 ---------- */
+  const barLabels = {
+    id: 'barLabels',
+    afterDatasetsDraw(chart) {
+      if (chart.config.type !== 'bar') return;
+      const { ctx, chartArea } = chart;
+      const dataset = chart.data.datasets[0];
+      const meta = chart.getDatasetMeta(0);
+      
+      ctx.save();
+      ctx.font = '600 10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+
+      meta.data.forEach((bar, index) => {
+        const value = dataset.data[index];
+        if (value < 0.005) return; // 忽略极小值（<0.5%），避免标签重叠
+        
+        const x = bar.x;
+        const y = bar.y; // 柱子顶部的 Y 坐标
+        const barHeight = bar.base - bar.y;
+        
+        // 如果柱子高度大于 22px，标签画在柱子内部（白色）；否则画在柱子外部上方（深色）
+        if (barHeight > 22) {
+          ctx.fillStyle = '#ffffff';
+          ctx.textBaseline = 'top';
+          ctx.fillText(value.toFixed(3), x, y + 4);
+        } else {
+          ctx.fillStyle = '#334155';
+          ctx.textBaseline = 'bottom';
+          ctx.fillText(value.toFixed(3), x, y - 4);
+        }
+      });
+      ctx.restore();
+    }
+  };
+
   /* ---------- 构建图表 ---------- */
   function buildCharts() {
     if (!hasChart) {
@@ -1368,9 +1405,10 @@ function initExplorer() {
             ticks: { font: { size: 10 } }
           },
           y: {
-            min: 0, max: 1,
+            suggestedMin: 0, 
+            // 去掉 max 和 stepSize，让图表根据数据动态计算最佳刻度
             grid: { color: 'rgba(226,232,240,.65)' }, border: { display: false },
-            ticks: { stepSize: 0.25, font: { size: 9 }, callback: v => Number(v).toFixed(2) }
+            ticks: { font: { size: 9 }, callback: v => Number(v).toFixed(2) }
           }
         },
         plugins: {
@@ -1432,18 +1470,45 @@ function initExplorer() {
     chart.update('none');
   }
 
+  // function updateBarChart(p) {
+  //   if (!charts.distribution) return;
+  //   const probs = categoryProbs(p.theta, p);
+  //   let modal = 0;
+  //   probs.forEach((v, i) => { if (v > probs[modal]) modal = i; });
+
+  //   charts.distribution.data.labels = probs.map((_, i) => 'C' + sub(i + 1));
+  //   charts.distribution.data.datasets[0].data = probs.map(v => +v.toFixed(6));
+  //   charts.distribution.data.datasets[0].backgroundColor = probs.map((_, i) =>
+  //     i === modal ? palette[i % palette.length] : palette[i % palette.length] + '55');
+  //   charts.distribution.data.datasets[0].borderColor = probs.map((_, i) => palette[i % palette.length]);
+  //   charts.distribution.update('none');
+  // }
+
   function updateBarChart(p) {
     if (!charts.distribution) return;
     const probs = categoryProbs(p.theta, p);
     let modal = 0;
-    probs.forEach((v, i) => { if (v > probs[modal]) modal = i; });
+    let maxProb = 0;
+    
+    probs.forEach((v, i) => { 
+      if (v > probs[modal]) modal = i; 
+      if (v > maxProb) maxProb = v;
+    });
+
+    // 核心修改：动态计算 Y 轴上限。
+    // 向上取整到 0.1 的倍数（例如 0.42 -> 0.5，0.85 -> 0.9）。
+    // 这样在分布平缓时，Y 轴会自动缩小，放大所有柱子的视觉比例。
+    const newYMax = Math.ceil(maxProb * 1.25 * 10) / 10;
+    charts.distribution.options.scales.y.suggestedMax = newYMax;
 
     charts.distribution.data.labels = probs.map((_, i) => 'C' + sub(i + 1));
     charts.distribution.data.datasets[0].data = probs.map(v => +v.toFixed(6));
     charts.distribution.data.datasets[0].backgroundColor = probs.map((_, i) =>
       i === modal ? palette[i % palette.length] : palette[i % palette.length] + '55');
     charts.distribution.data.datasets[0].borderColor = probs.map((_, i) => palette[i % palette.length]);
-    charts.distribution.update('none');
+    
+    // 核心修改：去掉 'none'，强制 Chart.js 重新计算坐标轴
+    charts.distribution.update(); 
   }
 
   /* ---------- 同步 UI ---------- */
